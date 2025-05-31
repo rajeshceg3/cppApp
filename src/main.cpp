@@ -1,3 +1,10 @@
+
+#include <fmt/core.h>
+
+int main() {
+    fmt::print("Hello, world!\n");
+    return 0;
+=======
 #include <iostream>
 #include <string>
 #include <curl/curl.h> // For libcurl functionalities
@@ -215,5 +222,6 @@ int main() {
         std::cerr << "Message sending process failed or API indicated an error." << std::endl;
     }
 
-    return 0; // Indicate successful execution of the main function
+   return 0; // Indicate successful execution of the main function
+
 }

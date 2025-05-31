@@ -30,3 +30,22 @@
 *.exe
 *.out
 *.app
+
+# Build artifacts
+build/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+app
+
+# Conan generated files
+conanbuildinfo.cmake
+conanbuildinfo.txt
+conanbuildinfo.props
+conaninfo.txt
+conan_toolchain.cmake
+graph_info.json
+conan.lock

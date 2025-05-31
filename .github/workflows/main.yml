@@ -1,0 +1,44 @@
+name: C++ CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.x'
+
+    - name: Install Conan
+      run: pip install conan
+
+    - name: Configure Conan profile
+      run: conan profile detect --force
+
+    - name: Install dependencies
+      run: conan install . --build=missing -s compiler.libcxx=libstdc++11
+
+    - name: Create build directory
+      run: mkdir build
+
+    - name: Run CMake
+      run: cmake .. -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+      working-directory: ./build
+
+    - name: Build project
+      run: cmake --build . --config Release
+      working-directory: ./build
+
+    - name: Run executable
+      run: ./app
+      working-directory: ./build
