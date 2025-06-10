@@ -1,0 +1,4 @@
+INFO: Standard error redirected to: e2e_tests/sc04_invalid_creds_api_fail.err
+
+ERROR: SMS sending failed. Twilio responded with HTTP 401.
+ERROR: Overall message sending process failed. Check previous messages for details.

@@ -1,0 +1,2 @@
+INFO: Standard error redirected to: e2e_tests/sc05a_invalid_recipient_format.err
+ERROR: Invalid recipient phone number format. It must start with '+', be 8-16 chars long, and contain only digits after '+' (e.g., +1234567890).
