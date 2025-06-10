@@ -1,0 +1,3 @@
+ACCOUNT_SID=ACconfigincompleteXXXXXXXXXXXXXXXX
+AUTH_TOKEN=AUTHconfigincompleteXXXXXXXXXXXX
+# FROM_NUMBER is missing

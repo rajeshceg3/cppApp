@@ -1,0 +1,9 @@
+ACfa1lxxxxxxxxxxxxxxxxxxxxxxxxXX
+AUTHfa1lxxxxxxxxxxxxxxxxxxxxxxx
++15551230004
+MOCK_SEND_SMS=MOCK_AUTH_FAIL
+MOCK_RESPONSE_CODE=401
+MOCK_API_RESPONSE={"code": 20003, "message": "Authentication Error - Your AccountSid or AuthToken was incorrect.", "more_info": "https://www.twilio.com/docs/errors/20003", "status": 401}
++447000000004
+Test API Auth Fail SC04
+N

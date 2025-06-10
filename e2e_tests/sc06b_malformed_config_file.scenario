@@ -1,0 +1,11 @@
+# This scenario expects config.txt to be malformed.
+# User will be prompted for all inputs.
+ACsc06bNEWXXXXXXXXXXXXXXXXXXXXXX
+AUTHsc06bNEWXXXXXXXXXXXXXXXXXXXX
++1555123006B
+MOCK_SEND_SMS=MOCK_SUCCESS
+MOCK_RESPONSE_CODE=201
+MOCK_API_RESPONSE={"sid": "SMmockedsc06b", "status": "queued", "message": "SMS from SC06b"}
++447987654321
+Test Malformed Config SC06b
+N

@@ -1,0 +1,9 @@
+ACxxxxxxxxxxxxxxxxxxxxxxxxVALID1
+AUTHxxxxxxxxxxxxxxxxxxxxxxxVALID1
++11112223333
+MOCK_SEND_SMS=MOCK_SUCCESS
+MOCK_RESPONSE_CODE=201
+MOCK_API_RESPONSE={"sid": "SMmockedsc01", "status": "queued", "message": "SMS from SC01"}
++447777888999
+Hello from E2E Test 1
+Y

@@ -1,0 +1,7 @@
+Y
+MOCK_SEND_SMS=MOCK_SUCCESS
+MOCK_RESPONSE_CODE=201
+MOCK_API_RESPONSE={"sid": "SMmockedsc02", "status": "queued", "message": "SMS from SC02"}
++441234567890
+Test message from SC02
+N
