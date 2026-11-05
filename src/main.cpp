@@ -1,24 +1,24 @@
-
-#include <fmt/core.h>
-
-int main() {
-    fmt::print("Hello, world!\n");
-    return 0;
-=======
 #include <iostream>
 #include <string>
 #include <vector>
 #include <fstream> // For file I/O (ifstream, ofstream)
 #include <sstream> // For string stream operations (istringstream)
 #include <cstdio>      // For std::remove
-#include <curl/curl.h> // For libcurl functionalities
+#ifndef SMS_OFFLINE_TEST
+#include <curl/curl.h>
+#endif
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <algorithm> // Required for std::find_if_not and transform for trim, and for std::all_of
 #include <cctype>    // Required for std::isdigit, std::isspace
+#include <stdexcept>
 #include <cstdlib>   // Required for exit, EXIT_FAILURE
 // #include <string> // Already included via iostream or other headers indirectly but good for explicitness if it were standalone.
 
 // --- Mock SMS Behavior Control Enum ---
 enum MockSmsBehavior {
+    UNSET,
     REAL,
     MOCK_SUCCESS,
     MOCK_AUTH_FAIL,
@@ -39,7 +39,8 @@ struct TestContext {
     std::streambuf* orig_cout_buf = nullptr;
     std::streambuf* orig_cerr_buf = nullptr;
 
-    MockSmsBehavior mock_sms_behavior = REAL;
+    MockSmsBehavior mock_sms_behavior = UNSET;
+    bool invalid_directive = false;
     long mock_response_code = 201; // Default for MOCK_SUCCESS
     std::string mock_api_response_str = "{\"sid\": \"SMmockedsuccessfulsid\", \"status\": \"queued\", \"error_code\": null, \"error_message\": null}"; // Default success JSON
 };
@@ -56,6 +57,8 @@ struct ConfigData {
     std::string from_number;
     bool loaded_successfully = false; // Flag to indicate if loading was successful
 };
+
+std::string trim_whitespace(const std::string& str);
 
 // Loads configuration from a file.
 // - filename: The name of the configuration file to load.
@@ -130,12 +133,9 @@ ConfigData load_config(const std::string& filename) {
 }
 
 // Helper function to mask the auth token for display
-// Shows first 3, last 3 chars, and asterisks in between.
+// Never display any token characters.
 std::string mask_auth_token(const std::string& token) {
-    if (token.length() < 8) { // Arbitrary length, if too short, just mask all
-        return std::string(token.length(), '*');
-    }
-    return token.substr(0, 3) + "****" + token.substr(token.length() - 3);
+    return std::string(token.length(), '*');
 }
 
 // Function to remove leading and trailing whitespace
@@ -159,24 +159,21 @@ std::string trim_whitespace(const std::string& str) {
 // - data: The ConfigData struct containing the information to save.
 // Returns true if saving was successful, false otherwise.
 bool save_config(const std::string& filename, const ConfigData& data) {
-    std::ofstream outfile(filename); // Opens in truncation mode by default
-    if (!outfile.is_open()) {
-        std::cerr << "ERROR: Unable to open configuration file (" << filename << ") for writing." << std::endl;
+    // Do not follow symlinks, truncate an existing secret, or inherit broad permissions.
+    int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    if (fd < 0) {
+        std::cerr << "ERROR: Cannot create configuration safely (existing files are not overwritten)." << std::endl;
         return false;
     }
-
-    outfile << "ACCOUNT_SID=" << data.account_sid << std::endl;
-    outfile << "AUTH_TOKEN=" << data.auth_token << std::endl;
-    outfile << "FROM_NUMBER=" << data.from_number << std::endl;
-
-    if (outfile.fail()) {
-        std::cerr << "ERROR: Failed to write all data to configuration file (" << filename << ")." << std::endl;
-        outfile.close();
-        return false;
+    const std::string text = "ACCOUNT_SID=" + data.account_sid + "\nAUTH_TOKEN=" + data.auth_token + "\nFROM_NUMBER=" + data.from_number + "\n";
+    size_t written = 0;
+    while (written < text.size()) {
+        const ssize_t n = write(fd, text.data() + written, text.size() - written);
+        if (n <= 0) { close(fd); unlink(filename.c_str()); return false; }
+        written += static_cast<size_t>(n);
     }
-
-    outfile.close();
-    std::cout << "\nINFO: Configuration saved successfully to " << filename << "." << std::endl;
+    if (close(fd) != 0) { unlink(filename.c_str()); return false; }
+    std::cout << "INFO: Configuration created with owner-only permissions." << std::endl;
     return true;
 }
 
@@ -188,6 +185,7 @@ bool save_config(const std::string& filename, const ConfigData& data) {
 // - s: pointer to the std::string object where data will be appended
 // Returns the total number of bytes handled. If it differs from size*nmemb,
 // libcurl will consider it an error.
+#ifndef SMS_OFFLINE_TEST
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *s) {
     size_t newLength = size * nmemb;
     try {
@@ -218,6 +216,8 @@ std::string url_encode(CURL *curl, const std::string &value) {
     return ""; // Return empty string if encoding fails
 }
 
+#endif
+
 // Sends an SMS using the Twilio API.
 // - account_sid: Your Twilio Account SID.
 // - auth_token: Your Twilio Auth Token.
@@ -246,25 +246,43 @@ bool send_sms(const std::string &account_sid,
     bool success_status = false;
     api_response_str.clear();
 
-    if (g_test_ctx.test_mode && g_test_ctx.mock_sms_behavior != REAL) {
+    if (g_test_ctx.test_mode &&
+        (g_test_ctx.invalid_directive || g_test_ctx.mock_sms_behavior == UNSET || g_test_ctx.mock_sms_behavior == REAL)) {
+        std::cerr << "OFFLINE_SAFETY: explicit valid mock required; no transport attempted." << std::endl;
+        return false;
+    }
+    if (g_test_ctx.test_mode) {
         success_status = mocked_send_sms(account_sid, auth_token, to_number, from_number, message_body, api_response_str);
         current_http_code = g_test_ctx.mock_response_code; // Mock sets this global for send_sms to retrieve
     } else {
+#ifdef SMS_OFFLINE_TEST
+        std::cerr << "OFFLINE_SAFETY: production transport is not compiled into this binary." << std::endl;
+        return false;
+#else
         CURL *curl;
-        CURLcode res;
+        CURLcode res = CURLE_OK;
         curl_global_init(CURL_GLOBAL_ALL);
         curl = curl_easy_init();
 
         if (curl) {
             std::string url = "https://api.twilio.com/2010-04-01/Accounts/" + account_sid + "/Messages.json";
-            std::string post_data = "To=" + url_encode(curl, to_number) +
-                                    "&From=" + url_encode(curl, from_number) +
-                                    "&Body=" + url_encode(curl, message_body);
+            const std::string encoded_to = url_encode(curl, to_number);
+            const std::string encoded_from = url_encode(curl, from_number);
+            const std::string encoded_body = url_encode(curl, message_body);
+            if (encoded_to.empty() || encoded_from.empty() || (!message_body.empty() && encoded_body.empty())) {
+                std::cerr << "ERROR: URL encoding failed; no transport attempted." << std::endl;
+                curl_easy_cleanup(curl);
+                curl_global_cleanup();
+                return false;
+            }
+            std::string post_data = "To=" + encoded_to + "&From=" + encoded_from + "&Body=" + encoded_body;
 
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data.c_str());
             curl_easy_setopt(curl, CURLOPT_USERNAME, account_sid.c_str());
             curl_easy_setopt(curl, CURLOPT_PASSWORD, auth_token.c_str());
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
             curl_easy_setopt(curl, CURLOPT_USERAGENT, "cpp-sms-app/1.0");
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &api_response_str);
@@ -291,14 +309,15 @@ bool send_sms(const std::string &account_sid,
             success_status = false; // Cannot proceed
         }
         curl_global_cleanup();
+#endif
     }
 
     // Common logging based on outcome
     std::cout << "\nINFO: HTTP response code from Twilio: " << current_http_code << std::endl;
-    std::cout << "INFO: Full API Response from Twilio: " << api_response_str << std::endl;
+    // Do not log raw API responses: they can contain message text and phone numbers.
 
     if (success_status && current_http_code == 201) { // Ensure both conditions for success message
-        std::cout << "\nSUCCESS: SMS successfully queued by Twilio for sending." << std::endl;
+        std::cout << (g_test_ctx.test_mode ? "\nMOCK_SUCCESS: simulated queue only; no SMS sent." : "\nSUCCESS: SMS queued by Twilio.") << std::endl;
     } else if (!success_status) { // Covers general failures or non-201 codes if success_status wasn't true already
         // If it was a libcurl error (res != CURLE_OK), specific error already printed.
         // If it was an HTTP error from Twilio (e.g. 400, 401, 500), this is the place.
@@ -307,13 +326,10 @@ bool send_sms(const std::string &account_sid,
              if (g_test_ctx.test_mode && g_test_ctx.mock_sms_behavior != REAL) {
                  // Mock already printed its specific context if it was an error simulation
              } else {
-                std::cerr << "INFO: Review the API response above for Twilio-specific error details." << std::endl;
+                std::cerr << "INFO: API response content redacted." << std::endl;
              }
-        } else if (res != CURLE_OK && !(g_test_ctx.test_mode && g_test_ctx.mock_sms_behavior == MOCK_PERFORM_FAIL)) {
-            // Handled by specific curl error print, this is a fallback.
-            // This block might be redundant if specific curl error is always printed above.
-        } else if (!(g_test_ctx.test_mode && g_test_ctx.mock_sms_behavior != REAL)) {
-             std::cerr << "\nERROR: SMS sending failed due to an unspecified error." << std::endl;
+        } else if (current_http_code == 0) {
+            std::cerr << "ERROR: Transport failed without an HTTP response." << std::endl;
         }
     }
     return success_status;
@@ -327,6 +343,7 @@ bool mocked_send_sms(const std::string &account_sid,
                      const std::string &from_number,
                      const std::string &message_body,
                      std::string &api_response_str) {
+    (void)account_sid; (void)auth_token; (void)to_number; (void)from_number; (void)message_body;
     api_response_str.clear(); // Start fresh
 
     switch (g_test_ctx.mock_sms_behavior) {
@@ -415,7 +432,7 @@ bool is_valid_phone_number(const std::string& number) {
     // Check if all characters after '+' are digits
     // std::all_of returns true if the predicate returns true for all elements in the range.
     // Here, it checks characters from the second one (index 1) to the end.
-    return std::all_of(number.begin() + 1, number.end(), ::isdigit);
+    return std::all_of(number.begin() + 1, number.end(), [](unsigned char c) { return std::isdigit(c); });
 }
 
 // Main function: Entry point of the application.
@@ -624,9 +641,13 @@ bool process_potential_mock_directive(std::string& current_line, TestContext& ct
         else if (value_part == "INVALID_TO_FAIL") ctx.mock_sms_behavior = MOCK_INVALID_TO_FAIL;
         else if (value_part == "URL_ENCODE_FAIL") ctx.mock_sms_behavior = MOCK_URL_ENCODE_FAIL;
         else if (value_part == "PERFORM_FAIL") ctx.mock_sms_behavior = MOCK_PERFORM_FAIL;
-        else if (value_part == "REAL") ctx.mock_sms_behavior = REAL;
+        else if (value_part == "REAL") {
+            ctx.invalid_directive = true;
+            std::cerr << "OFFLINE_SAFETY: REAL is forbidden in scenarios." << std::endl;
+        }
         else {
-            std::cerr << "TEST_FRAMEWORK_ERROR: Unknown MOCK_SEND_SMS value: " << value_part << std::endl;
+            ctx.invalid_directive = true;
+            std::cerr << "OFFLINE_SAFETY: Unknown mock directive value." << std::endl;
             return true;
         }
         std::cout << "INFO_MOCK_UPDATE: g_test_ctx.mock_sms_behavior set to " << value_part << std::endl;
@@ -636,16 +657,24 @@ bool process_potential_mock_directive(std::string& current_line, TestContext& ct
         value_part = directive_line.substr(std::string("MOCK_RESPONSE_CODE=").length());
         value_part = trim_whitespace(value_part);
         try {
-            ctx.mock_response_code = std::stol(value_part);
+            size_t used = 0;
+            ctx.mock_response_code = std::stol(value_part, &used);
+            if (used != value_part.size() || ctx.mock_response_code < 100 || ctx.mock_response_code > 599) throw std::invalid_argument("invalid status");
             std::cout << "INFO_MOCK_UPDATE: g_test_ctx.mock_response_code set to " << ctx.mock_response_code << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "TEST_FRAMEWORK_ERROR: Invalid MOCK_RESPONSE_CODE value: " << value_part << " (" << e.what() << ")" << std::endl;
+            ctx.invalid_directive = true;
+            std::cerr << "TEST_FRAMEWORK_ERROR: Invalid mock response code." << std::endl;
         }
         return true;
     }
     if (directive_line.rfind("MOCK_API_RESPONSE=", 0) == 0) {
         ctx.mock_api_response_str = directive_line.substr(std::string("MOCK_API_RESPONSE=").length());
-        std::cout << "INFO_MOCK_UPDATE: g_test_ctx.mock_api_response_str set to " << ctx.mock_api_response_str << std::endl;
+        std::cout << "INFO_MOCK_UPDATE: mock response set (content redacted)." << std::endl;
+        return true;
+    }
+    if (directive_line.rfind("MOCK_", 0) == 0) {
+        ctx.invalid_directive = true;
+        std::cerr << "OFFLINE_SAFETY: Unknown mock directive." << std::endl;
         return true;
     }
     return false;
@@ -835,11 +864,11 @@ static void collect_sms_details_interactively(std::string& to_number, std::strin
     do {std::getline(*ctx.input_stream, message_body); if(!ctx.input_stream->good()){std::cerr << "\nCRITICAL: EOF MsgBody"<<std::endl; exit(EXIT_FAILURE);}} while(process_potential_mock_directive(message_body, ctx) && ctx.input_stream->good());
     message_body = trim_whitespace(message_body);
     if (message_body.empty()) {
-        std::cout << "WARNING: Message body is empty. An empty SMS will be sent." << std::endl;
+        std::cout << "WARNING: Message body is empty. Continuing with the selected transport policy." << std::endl;
     }
 }
 
-static void prompt_and_save_config_if_needed(const ConfigData& current_config, TestContext& ctx) {
+static bool prompt_and_save_config_if_needed(const ConfigData& current_config, TestContext& ctx) {
     if (current_config.loaded_successfully) {
         char save_choice = 'N';
         std::cout << "\n--- Save Configuration ---" << std::endl;
@@ -851,16 +880,29 @@ static void prompt_and_save_config_if_needed(const ConfigData& current_config, T
             save_choice = 'Y';
         }
         if (save_choice == 'Y') {
-            save_config(CONFIG_FILENAME, current_config);
+            return save_config(CONFIG_FILENAME, current_config);
         } else {
             std::cout << "\nINFO: Configuration will not be saved." << std::endl;
         }
     } else {
         std::cout << "\nINFO: Current configuration is incomplete; skipping save option." << std::endl;
     }
+    return true;
 }
 
 int main(int argc, char *argv[]) {
+    const bool scenario = argc == 3 && std::string(argv[1]) == "--test-mode";
+#ifdef SMS_OFFLINE_TEST
+    if (!scenario) {
+        std::cerr << "OFFLINE_SAFETY: offline binary requires --test-mode <scenario>." << std::endl;
+        return EXIT_FAILURE;
+    }
+#else
+    if (!scenario && !(argc == 2 && std::string(argv[1]) == "--send")) {
+        std::cerr << "Live SMS requires explicit --send; use the offline target for verification." << std::endl;
+        return EXIT_FAILURE;
+    }
+#endif
     if (!setup_test_mode(argc, argv, g_test_ctx)) {
         return EXIT_FAILURE;
     }
@@ -876,19 +918,16 @@ int main(int argc, char *argv[]) {
     get_user_choice_for_loaded_config(loaded_config, current_config, g_test_ctx);
     collect_credentials_interactively(current_config, loaded_config, g_test_ctx);
     collect_sms_details_interactively(to_number, message_body, g_test_ctx);
-    prompt_and_save_config_if_needed(current_config, g_test_ctx);
+    if (!prompt_and_save_config_if_needed(current_config, g_test_ctx)) {
+        teardown_test_mode(g_test_ctx);
+        return EXIT_FAILURE;
+    }
 
     std::cout << "\n--- Sending SMS ---" << std::endl;
     std::cout << "INFO: Attempting to send SMS via Twilio..." << std::endl;
-    if (send_sms(current_config.account_sid, current_config.auth_token, to_number, current_config.from_number, message_body, api_response)) {
-        // Messages handled by send_sms
-    } else {
-        // Error messages handled by send_sms or sub-functions
-        // For clarity, a general error message might be useful if not already covered comprehensively
-        // std::cerr << "ERROR: Overall message sending process failed. Check previous messages for details." << std::endl;
-    }
+    const bool sent = send_sms(current_config.account_sid, current_config.auth_token, to_number, current_config.from_number, message_body, api_response);
 
     teardown_test_mode(g_test_ctx);
-   return 0;
+   return sent ? EXIT_SUCCESS : EXIT_FAILURE;
 
 }

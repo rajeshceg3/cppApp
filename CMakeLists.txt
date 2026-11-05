@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.15)
-project(CppApp)
-
-set(CMAKE_CXX_STANDARD 17)
-
-find_package(fmt CONFIG REQUIRED)
-
-add_executable(app src/main.cpp)
-
-target_link_libraries(app PRIVATE fmt::fmt)
+project(CppApp LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_executable(sms_app_offline src/main.cpp)
+target_compile_definitions(sms_app_offline PRIVATE SMS_OFFLINE_TEST=1)
+target_compile_options(sms_app_offline PRIVATE -Wall -Wextra -Wpedantic)
+option(SMS_BUILD_PRODUCTION "Build live SMS transport (never used by verification)" OFF)
+if(SMS_BUILD_PRODUCTION)
+  find_package(CURL REQUIRED)
+  add_executable(sms_app src/main.cpp)
+  target_link_libraries(sms_app PRIVATE CURL::libcurl)
+endif()
