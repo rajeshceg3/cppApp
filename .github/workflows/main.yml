@@ -1,44 +1,23 @@
-name: C++ CI
-
+name: C++ offline verification
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
-
+    branches: [main]
+permissions:
+  contents: read
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.x'
-
-    - name: Install Conan
-      run: pip install conan
-
-    - name: Configure Conan profile
-      run: conan profile detect --force
-
-    - name: Install dependencies
-      run: conan install . --build=missing -s compiler.libcxx=libstdc++11
-
-    - name: Create build directory
-      run: mkdir build
-
-    - name: Run CMake
-      run: cmake .. -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
-      working-directory: ./build
-
-    - name: Build project
-      run: cmake --build . --config Release
-      working-directory: ./build
-
-    - name: Run executable
-      run: ./app
-      working-directory: ./build
+      - uses: actions/checkout@v4
+      - name: Check required verification programs
+        run: command -v g++ && command -v python3 && command -v nm && command -v readelf && command -v strace
+      - name: Build and verify with no production transport
+        run: make verify
+      - name: Verify CMake safe default
+        run: |
+          cmake -S . -B build-cmake
+          cmake --build build-cmake
+          python3 tests/verify_offline.py build-cmake/sms_app_offline

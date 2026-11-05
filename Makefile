@@ -1,21 +1,30 @@
-CXX = g++
-CXXFLAGS = -std=c++11 -Wall -I/usr/include
-LDFLAGS = -lcurl
-SRCDIR = src
-BUILDDIR = build
-TARGET = sms_app
+CXX ?= g++
+CXXFLAGS ?= -std=c++11 -Wall -Wextra -Wpedantic
+BUILDDIR ?= build
 
-all: $(BUILDDIR)/$(TARGET)
+# Safe default: this executable contains no production SMS transport or curl link.
+all: offline
 
-$(BUILDDIR)/$(TARGET): $(BUILDDIR)/main.o
+offline: $(BUILDDIR)/sms_app_offline
+
+$(BUILDDIR)/sms_app_offline: src/main.cpp
 	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -DSMS_OFFLINE_TEST=1 -o $@ $<
 
-$(BUILDDIR)/main.o: $(SRCDIR)/main.cpp
+# Explicit opt-in build only. Never run this target as a verification scenario.
+production: $(BUILDDIR)/sms_app
+
+$(BUILDDIR)/sms_app: src/main.cpp FORCE
 	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -o $@ $< -lcurl
+
+verify: offline
+	python3 tests/verify_offline.py $(BUILDDIR)/sms_app_offline
 
 clean:
-	rm -rf $(BUILDDIR)/*
+	rm -f $(BUILDDIR)/sms_app_offline
+	# Preserve the historical tracked production executable.
 
-.PHONY: all clean
+FORCE:
+
+.PHONY: all offline production verify clean FORCE

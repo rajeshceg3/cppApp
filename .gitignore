@@ -49,3 +49,8 @@ conaninfo.txt
 conan_toolchain.cmake
 graph_info.json
 conan.lock
+
+# Local credentials and alternate build trees
+config.txt
+test_config_delete_me.txt
+build-*/
